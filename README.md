@@ -233,13 +233,6 @@ The scraper respects Futbin with:
 - Session reuse for efficiency
 - Graceful error handling
 
-## Tips for Success
-
-1. **Start small**: Track 10-20 players you know well
-2. **Daily scrapes**: More data = better analysis
-3. **Watch for events**: Content drops (TOTW, promos) cause price swings
-4. **Use watchlists**: Set target prices and stick to your plan
-5. **Price floors**: Buying near the minimum reduces downside risk
 
 ## Roadmap
 
@@ -255,5 +248,3 @@ The scraper respects Futbin with:
 Personal use only. Not affiliated with EA or Futbin.
 
 ---
-
-Built with 🐍 Python, 🐘 PostgreSQL, and ⚽ love for the game.
