@@ -1,0 +1,23 @@
+# HazardPay - FC 26 Market Tracker
+# Core dependencies
+
+# Web scraping
+requests>=2.31.0
+beautifulsoup4>=4.12.0
+lxml>=5.0.0
+
+# Database
+pymongo>=4.6.0
+
+# Scheduling
+APScheduler>=3.10.0
+
+# Environment & config
+python-dotenv>=1.0.0
+
+# CLI & output formatting
+rich>=13.7.0
+click>=8.1.0
+
+# Data analysis
+pandas>=2.1.0

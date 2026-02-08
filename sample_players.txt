@@ -1,0 +1,75 @@
+# HazardPay - Sample Players List
+# One Futbin URL per line. Lines starting with # are ignored.
+
+# Icons
+https://www.futbin.com/26/player/21407/cruyff
+https://www.futbin.com/26/player/20689/ribery
+https://www.futbin.com/26/player/20694/abily
+https://www.futbin.com/26/player/18745/ventura-filho/market
+https://www.futbin.com/26/player/18699/franc-dos-santos/market
+https://www.futbin.com/26/player/18703/franz-beckenbauer/market
+https://www.futbin.com/26/player/18712/carlos-alberto-torres/market
+https://www.futbin.com/26/player/18714/cafu/market
+https://www.futbin.com/26/player/21564/vieira/market
+https://www.futbin.com/26/player/18778/thuram/market
+
+# Heroes
+https://www.futbin.com/26/player/18822/ginola/market
+https://www.futbin.com/26/player/21944/cesc-fabregas/market
+https://www.futbin.com/26/player/21404/cordoba/market
+https://www.futbin.com/26/player/21560/santos-do-nascimen/market
+
+
+# TOTY Players
+https://www.futbin.com/26/player/21770/jules-kounde
+https://www.futbin.com/26/player/21766/gianluigi-donnarumma/market
+https://www.futbin.com/26/player/21805/lamine-yamal-nasraoui-ebana/market
+
+# TOTW
+https://www.futbin.com/26/player/21852/wilfried-kanga/market
+https://www.futbin.com/26/player/21977/eileen-campbell/market
+https://www.futbin.com/26/player/21990/nadia-krezyman/market
+https://www.futbin.com/26/player/21993/cristina-cubedo-pitarch/market
+https://www.futbin.com/26/player/20181/angelo-stiller/market
+https://www.futbin.com/26/player/20495/laia-aleixandri-lopez/market
+https://www.futbin.com/26/player/20497/romee-leuchter/market
+https://www.futbin.com/26/player/20583/yeremay-hernandez-cubas/market
+https://www.futbin.com/26/player/20767/claudiu-petrila/market
+https://www.futbin.com/26/player/21455/wendie-renard/market
+
+# 88 Rated Fodder
+https://www.futbin.com/26/player/110/irene-paredes-hernandez/market
+https://www.futbin.com/26/player/42/gabriel-dos-s-magalhaes/market
+https://www.futbin.com/26/player/137/marie-katoto/market
+https://www.futbin.com/26/player/63/robert-lewandowski/market
+https://www.futbin.com/26/player/32/bukayo-saka/market
+
+# 89 Rated Fodder
+https://www.futbin.com/26/player/86/joshua-kimmich/market
+https://www.futbin.com/26/player/128/maria-francesca-caldentey-oliver/market
+https://www.futbin.com/26/player/138/khadija-shaw/market
+https://www.futbin.com/26/player/68/vitor-machado-ferreira/market
+https://www.futbin.com/26/player/41/florian-wirtz/market
+
+# 87 Rated Fodder
+https://www.futbin.com/26/player/98/leah-williamson/market
+https://www.futbin.com/26/player/235/sam-kerr/market
+https://www.futbin.com/26/player/84/ada-hegerberg/market
+https://www.futbin.com/26/player/127/rose-lavelle/market
+https://www.futbin.com/26/player/216/alessandro-bastoni/market
+
+# 86 Rated Fodder
+https://www.futbin.com/26/player/258/pernille-harder/market
+https://www.futbin.com/26/player/255/sandro-tonali/market
+https://www.futbin.com/26/player/250/ona-batlle-pascual/market
+https://www.futbin.com/26/player/254/lionel-messi/market
+https://www.futbin.com/26/player/252/hakan-calhanoglu/market
+
+# 84 Rated Fodder
+https://www.futbin.com/26/player/325/cody-gakpo/market
+https://www.futbin.com/26/player/18946/benjamin-pavard/market
+https://www.futbin.com/26/player/1024/alejandro-grimaldo-garcia/market
+https://www.futbin.com/26/player/17334/alexander-sorloth/market
+https://www.futbin.com/26/player/355/bernardo-mota-carvalho-e-silva/market
+
+# Add more players below...
