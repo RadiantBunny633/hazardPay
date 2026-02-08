@@ -330,9 +330,8 @@ def player_list(ctx, show_all):
         return
     
     table = Table(title="Tracked Players", box=box.ROUNDED)
-    table.add_column("Futbin ID", style="dim")
+    table.add_column("ID", style="dim", max_width=8)
     table.add_column("Name", style="bold")
-    table.add_column("Type", style="dim")
     table.add_column("Price", justify="right", style="cyan")
     table.add_column("Position", justify="center")  # 0-100% in range
     table.add_column("24H Δ", justify="right")
@@ -401,9 +400,8 @@ def player_list(ctx, show_all):
                     change_7d = f"[{color}]{sign}{pct:.1f}%[/{color}]"
         
         table.add_row(
-            str(p['futbin_id']),
+            str(p['id'])[:8],
             p['name'],
-            p.get('card_type', '-'),
             price_str,
             position_str,
             change_24h,
@@ -492,85 +490,32 @@ def player_remove(ctx, player_id, force):
 @click.option('--delay', '-d', default=2.0, help='Delay between requests (seconds)')
 @click.pass_context
 def player_import_file(ctx, filepath, backfill, delay):
-    """Import players from a file (one Futbin URL per line).
-
-    Section headers (# Icons, # TOTW, etc.) are used to assign card_type
-    to each player automatically during import.
-    """
+    """Import players from a file (one Futbin URL per line)."""
     from src.player_manager import get_manager
     import time
-
+    
     manager = get_manager(platform=ctx.obj['platform'])
-
-    # Map section header keywords to card types
-    SECTION_MAP = {
-        'icon': 'ICON',
-        'hero': 'HERO',
-        'toty': 'TOTY',
-        'totw': 'TOTW',
-        'winter wildcard': 'PROMO',
-        'future star': 'PROMO',
-        'joga bonito': 'PROMO',
-        'centurion': 'PROMO',
-        'thunderstruck': 'PROMO',
-        'promo': 'PROMO',
-        '84 rated fodder': 'GOLD_RARE',
-        '85 rated fodder': 'GOLD_RARE',
-        '86 rated fodder': 'GOLD_RARE',
-        '87 rated fodder': 'GOLD_RARE',
-        '88 rated fodder': 'GOLD_RARE',
-        '89 rated fodder': 'GOLD_RARE',
-        'fodder': 'GOLD_RARE',
-    }
-
-    def parse_section_card_type(header_text: str) -> str:
-        """Map a section header like '# Icons' to a card type."""
-        lower = header_text.lower().strip()
-        for keyword, card_type in SECTION_MAP.items():
-            if keyword in lower:
-                return card_type
-        return None
-
-    # Parse file: track current section header for card_type
-    entries = []  # list of (url, card_type)
-    current_card_type = None
-
+    
     with open(filepath, 'r') as f:
-        for line in f:
-            stripped = line.strip()
-            if not stripped:
-                continue
-            if stripped.startswith('#'):
-                # Section header — extract card type
-                header = stripped.lstrip('#').strip()
-                parsed = parse_section_card_type(header)
-                if parsed:
-                    current_card_type = parsed
-                continue
-            # It's a URL
-            entries.append((stripped, current_card_type))
-
-    if not entries:
+        urls = [line.strip() for line in f if line.strip() and not line.startswith('#')]
+    
+    if not urls:
         console.print("No URLs found in file", style="yellow")
         return
-
-    console.print(f"Found [bold]{len(entries)}[/bold] player URLs to import", style="cyan")
-
+    
+    console.print(f"Found [bold]{len(urls)}[/bold] player URLs to import", style="cyan")
+    
     added = 0
     failed = 0
-
-    for i, (url, card_type) in enumerate(entries, 1):
-        ct_label = f" [{card_type}]" if card_type else ""
-        console.print(f"[{i}/{len(entries)}] Processing{ct_label}: {url[:60]}...", style="dim")
-
+    
+    for i, url in enumerate(urls, 1):
+        console.print(f"[{i}/{len(urls)}] Processing: {url[:60]}...", style="dim")
+        
         try:
-            result = manager.add_player_by_url(
-                url, backfill_history=backfill, card_type=card_type
-            )
+            result = manager.add_player_by_url(url, backfill_history=backfill)
             if result:
                 hist_msg = f" (+{result.get('history_count', 0)} history)" if backfill else ""
-                ct_msg = f" ({result.get('card_type', '')})" if result.get('card_type') else ""
-                console.print(f"  ✓ Added {result['name']}{ct_msg}{hist_msg}", style="green")
+                console.print(f"  ✓ Added {result['name']}{hist_msg}", style="green")
                 added += 1
             else:
                 console.print(f"  ✗ Failed to add", style="red")
@@ -578,11 +523,11 @@ def player_import_file(ctx, filepath, backfill, delay):
         except Exception as e:
             console.print(f"  ✗ Error: {e}", style="red")
             failed += 1
-
+        
         # Rate limiting
-        if i < len(entries):
+        if i < len(urls):
             time.sleep(delay)
-
+    
     console.print(f"\n✓ Import complete: {added} added, {failed} failed", style="green bold")
 
 
@@ -1417,37 +1362,19 @@ def portfolio():
 @click.option('--target', '-t', type=int, default=None, help='Target sell price')
 @click.option('--type', '-T', 'pos_type', default='meta', type=click.Choice(['fodder', 'meta']), help='Investment type')
 @click.option('--notes', '-n', default='', help='Trade notes')
-@click.option('--id', 'futbin_id', type=int, default=None, help='Futbin ID (use when multiple versions exist)')
 @click.pass_context
-def portfolio_buy(ctx, player_name, price, qty, target, pos_type, notes, futbin_id):
+def portfolio_buy(ctx, player_name, price, qty, target, pos_type, notes):
     """Record a buy position."""
     from src.portfolio import get_portfolio
     from src.database import get_db
-
+    
     db = get_db()
-
-    if futbin_id:
-        # Exact match by futbin_id
-        player = db.db.players.find_one({'futbin_id': futbin_id})
-    else:
-        # Find by name — if multiple matches, prompt user
-        matches = list(db.db.players.find({
-            'name': {'$regex': player_name, '$options': 'i'}
-        }))
-        if len(matches) == 0:
-            player = None
-        elif len(matches) == 1:
-            player = matches[0]
-        else:
-            console.print(f"Multiple players match '{player_name}':", style="yellow")
-            for m in matches:
-                cache = db.db.longterm_cache.find_one({'cache_key': f"{m['futbin_id']}_{ctx.obj['platform']}"})
-                cur_price = cache['data'].get('current', '?') if cache and cache.get('data') else '?'
-                cur_str = f"{cur_price:,}" if isinstance(cur_price, int) else cur_price
-                console.print(f"  --id {m['futbin_id']}  {m['name']}  ({m.get('card_type', '?')})  ~{cur_str}")
-            console.print("\nRe-run with --id <futbin_id> to pick one.", style="yellow")
-            return
-
+    
+    # Find player by name (case-insensitive partial match)
+    player = db.db.players.find_one({
+        'name': {'$regex': player_name, '$options': 'i'}
+    })
+    
     if not player:
         console.print(f"Player '{player_name}' not found", style="red")
         return
@@ -1517,6 +1444,7 @@ def portfolio_list(ctx, closed):
     table.add_column("Current" if not closed else "Sold", justify="right", style="cyan")
     table.add_column("P&L", justify="right")
     table.add_column("P&L %", justify="right")
+    table.add_column("Notes", style="dim", max_width=55)
     
     total_pl = 0
     
@@ -1551,7 +1479,8 @@ def portfolio_list(ctx, closed):
             f"{pos['buy_price']:,}",
             f"{current:,}" if current else "-",
             pl_str,
-            pct_str
+            pct_str,
+            pos.get('notes', '')[:54]
         )
     
     console.print(table)
@@ -1699,14 +1628,10 @@ def scores(ctx, sort):
     signals = get_smart_signals(platform=ctx.obj['platform'])
     
     console.print("[bold]📊 Calculating buy scores for all players...[/bold]\n")
-
+    
     players = db.get_all_players()
-
-    # Pre-warm longterm cache before scoring loop
-    signals.refresh_longterm_cache(players)
-
     results = []
-
+    
     for p in players:
         signal = signals.get_buy_score(p['id'])
         if signal:
@@ -1836,10 +1761,6 @@ def check_buy(ctx, player_name):
         return
     
     signals = get_smart_signals(platform=ctx.obj['platform'])
-
-    # Pre-warm longterm cache for this player
-    signals.refresh_longterm_cache([player])
-
     signal = signals.get_buy_score(str(player['_id']))
     
     if not signal:
@@ -2164,266 +2085,6 @@ def scheduler_cmd(ctx, interval):
             run_update()
     except KeyboardInterrupt:
         console.print("\n[yellow]Scheduler stopped[/yellow]")
-
-
-# ========== ML Pipeline Commands ==========
-
-@cli.command('enrich-cards')
-@click.option('--force', '-f', is_flag=True, help='Re-enrich even if card_type already set')
-@click.option('--player', '-p', type=str, default=None, help='Enrich a specific player by name')
-@click.pass_context
-def enrich_cards(ctx, force, player):
-    """Step 1: Enrich player cards with card_type and first_seen_at."""
-    from src.ml_pipeline import MLPipeline
-
-    pipeline = MLPipeline(platform=ctx.obj['platform'])
-
-    if player:
-        from src.database import get_db
-        db = get_db()
-        p = db.db.players.find_one({'name': {'$regex': player, '$options': 'i'}})
-        if not p:
-            console.print(f"Player '{player}' not found", style="red")
-            return
-        slug = p.get('slug') or p.get('name', '').lower().replace(' ', '-')
-        result = pipeline.enrich_player(p['futbin_id'], slug, force=force)
-        console.print(f"Enriched {p['name']}: card_type={result.get('card_type')}, "
-                      f"first_seen={result.get('first_seen_at')}, source={result.get('source')}")
-        return
-
-    console.print("[bold]Enriching all players with card_type and first_seen_at...[/bold]\n")
-    results = pipeline.enrich_all_players(force=force)
-
-    table = Table(title="Card Metadata Enrichment", box=box.SIMPLE)
-    table.add_column("Player", style="cyan")
-    table.add_column("Card Type", style="bold")
-    table.add_column("First Seen")
-    table.add_column("Source", style="dim")
-
-    enriched = 0
-    skipped = 0
-    for r in results:
-        if r.get('skipped'):
-            skipped += 1
-        else:
-            enriched += 1
-
-        first_seen_str = r['first_seen_at'].strftime('%Y-%m-%d') if r.get('first_seen_at') else '-'
-        source_str = r.get('source', '-')
-        table.add_row(r['name'], r.get('card_type', '?'), first_seen_str, source_str)
-
-    console.print(table)
-    console.print(f"\n[bold green]Enriched: {enriched}[/bold green]  [dim]Skipped (existing): {skipped}[/dim]")
-
-
-@cli.command('label-signals')
-@click.option('--min-age', '-a', default=7, type=int, help='Minimum age in days before labeling')
-@click.option('--stats', '-s', is_flag=True, help='Show labeled data statistics')
-@click.pass_context
-def label_signals_cmd(ctx, min_age, stats):
-    """Step 2: Label signals with actual price outcomes (what happened after each signal)."""
-    from src.ml_pipeline import MLPipeline
-
-    pipeline = MLPipeline(platform=ctx.obj['platform'])
-
-    if stats:
-        label_stats = pipeline.get_label_stats()
-        if label_stats['total'] == 0:
-            console.print("No labeled signals yet. Run [bold]label-signals[/bold] first.", style="yellow")
-            return
-
-        console.print(f"[bold]Labeled Signals: {label_stats['total']}[/bold]\n")
-
-        if label_stats.get('by_direction'):
-            console.print("[bold]By Direction:[/bold]")
-            for direction, count in label_stats['by_direction'].items():
-                console.print(f"  {direction}: {count}")
-
-        if label_stats.get('by_card_type'):
-            console.print("\n[bold]By Card Type:[/bold]")
-            table = Table(box=box.SIMPLE)
-            table.add_column("Card Type")
-            table.add_column("Count", justify="right")
-            table.add_column("Avg 7D Return", justify="right")
-            for ct, data in sorted(label_stats['by_card_type'].items()):
-                avg_ret = f"{data['avg_return_7d']:+.1f}%" if data.get('avg_return_7d') is not None else '-'
-                table.add_row(ct, str(data['count']), avg_ret)
-            console.print(table)
-        return
-
-    console.print("[bold]Labeling signals with actual outcomes...[/bold]\n")
-    result = pipeline.label_signals(min_age_days=min_age)
-
-    console.print(f"  Labeled:          [green]{result['labeled']}[/green]")
-    console.print(f"  Already labeled:  [dim]{result['already_labeled']}[/dim]")
-    console.print(f"  No price data:    [red]{result['skipped_no_price']}[/red]")
-
-    from src.database import get_db
-    total = get_db().db.labeled_signals.count_documents({})
-    console.print(f"\n[bold]Total labeled signals: {total}[/bold]")
-
-
-@cli.command('baselines')
-@click.option('--card-type', '-t', default=None, help='Filter by card type')
-@click.option('--new-cards', '-n', is_flag=True, help='Show time-to-bottom patterns for new cards')
-@click.pass_context
-def baselines_cmd(ctx, card_type, new_cards):
-    """Step 3: Show statistical baselines for signal accuracy by card type."""
-    from src.ml_pipeline import MLPipeline
-
-    pipeline = MLPipeline(platform=ctx.obj['platform'])
-
-    if new_cards:
-        patterns = pipeline.compute_new_card_patterns()
-        if not patterns:
-            console.print("No cards with first_seen_at data. Run [bold]enrich-cards[/bold] first.", style="yellow")
-            return
-
-        table = Table(title="Time-to-Bottom by Card Type", box=box.ROUNDED)
-        table.add_column("Card Type", style="bold")
-        table.add_column("Samples", justify="right")
-        table.add_column("Avg Days", justify="right")
-        table.add_column("Median Days", justify="right")
-        table.add_column("Avg Drop %", justify="right")
-
-        for p in patterns:
-            table.add_row(
-                p['card_type'],
-                str(p['sample_size']),
-                str(p['avg_days_to_bottom']),
-                str(p['median_days_to_bottom']),
-                f"{p['avg_drop_pct']:.1f}%",
-            )
-
-        console.print(table)
-
-        # Show individual entries per type
-        for p in patterns:
-            console.print(f"\n[bold]{p['card_type']}[/bold] details:")
-            detail_table = Table(box=box.SIMPLE)
-            detail_table.add_column("Player")
-            detail_table.add_column("Days to Bottom", justify="right")
-            detail_table.add_column("Drop %", justify="right")
-            detail_table.add_column("First Price", justify="right")
-            detail_table.add_column("Bottom Price", justify="right")
-            for e in p['entries']:
-                detail_table.add_row(
-                    e['player'],
-                    str(e['days_to_bottom']),
-                    f"{e['drop_pct']:.1f}%",
-                    f"{e['first_price']:,}",
-                    f"{e['bottom_price']:,}",
-                )
-            console.print(detail_table)
-        return
-
-    baselines = pipeline.compute_baselines()
-    if not baselines:
-        console.print("No labeled data. Run [bold]label-signals[/bold] first.", style="yellow")
-        return
-
-    for ct, data in baselines.items():
-        if card_type and ct != card_type:
-            continue
-
-        console.print(f"\n[bold]{ct}[/bold] ({data['total_signals']} signals)")
-
-        table = Table(box=box.SIMPLE)
-        table.add_column("Score Range")
-        table.add_column("N", justify="right")
-        table.add_column("Avg 2D", justify="right")
-        table.add_column("Avg 7D", justify="right")
-        table.add_column("Hit 2D", justify="right")
-        table.add_column("Hit 7D", justify="right")
-        table.add_column("Win 7D", justify="right")
-
-        for row in data['by_score_range']:
-            if row['n'] == 0:
-                table.add_row(row['range'], '0', '-', '-', '-', '-', '-')
-                continue
-
-            ret_2d = row.get('avg_return_2d')
-            ret_7d = row.get('avg_return_7d')
-            table.add_row(
-                row['range'],
-                str(row['n']),
-                f"{ret_2d:+.1f}%" if ret_2d is not None else '-',
-                f"{ret_7d:+.1f}%" if ret_7d is not None else '-',
-                f"{row.get('hit_rate_2d', 0):.0f}%" if row.get('hit_rate_2d') is not None else '-',
-                f"{row.get('hit_rate_7d', 0):.0f}%" if row.get('hit_rate_7d') is not None else '-',
-                f"{row.get('win_rate_7d', 0):.0f}%" if row.get('win_rate_7d') is not None else '-',
-            )
-
-        console.print(table)
-
-
-@cli.command('eval-ml')
-@click.option('--min-samples', '-n', default=100, type=int, help='Minimum labeled samples required')
-@click.pass_context
-def eval_ml_cmd(ctx, min_samples):
-    """Step 4: Evaluate if ML improves over statistical baselines."""
-    from src.ml_pipeline import MLPipeline
-
-    pipeline = MLPipeline(platform=ctx.obj['platform'])
-
-    total = pipeline.db.db.labeled_signals.count_documents({
-        'direction': 'BUY', 'return_7d_pct': {'$ne': None}
-    })
-
-    if total < min_samples:
-        console.print(f"Need {min_samples} labeled BUY signals, have {total}.", style="yellow")
-        console.print("Run [bold]label-signals[/bold] periodically to build up data.", style="dim")
-        return
-
-    try:
-        from sklearn.ensemble import GradientBoostingRegressor
-    except ImportError:
-        console.print("scikit-learn required. Install with: [bold]pip install scikit-learn[/bold]", style="red")
-        return
-
-    console.print(f"[bold]Evaluating ML on {total} labeled signals...[/bold]\n")
-
-    try:
-        result = pipeline.evaluate_ml()
-    except ValueError as e:
-        console.print(f"Error: {e}", style="red")
-        return
-
-    table = Table(title="Baseline vs ML", box=box.ROUNDED)
-    table.add_column("Metric")
-    table.add_column("Baseline", justify="right")
-    table.add_column("ML (GBT)", justify="right")
-    table.add_column("Delta", justify="right")
-
-    table.add_row(
-        "MAE (lower=better)",
-        f"{result['baseline_mae']:.2f}%",
-        f"{result['ml_mae']:.2f}%",
-        f"{result['improvement_pct']:+.1f}%",
-    )
-    table.add_row(
-        "Direction Accuracy",
-        f"{result['baseline_hit_rate']:.0f}%",
-        f"{result['ml_hit_rate']:.0f}%",
-        f"{result['ml_hit_rate'] - result['baseline_hit_rate']:+.1f}%",
-    )
-
-    console.print(table)
-    console.print(f"\nTrain: {result['train_size']} | Test: {result['test_size']}")
-
-    console.print("\n[bold]Top 10 Features:[/bold]")
-    for feat, importance in result['top_features']:
-        bar_len = int(importance * 100)
-        console.print(f"  {feat:35s} {importance:.4f} {'█' * bar_len}")
-
-    if result['recommendation'] == 'ADOPT_ML':
-        console.print(
-            "\n[bold green]Recommendation: ML improves over baselines by >15%. Worth adopting.[/bold green]"
-        )
-    else:
-        console.print(
-            "\n[bold yellow]Recommendation: ML does not meaningfully improve. Keep statistical baselines.[/bold yellow]"
-        )
 
 
 def main():
