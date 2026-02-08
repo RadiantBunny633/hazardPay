@@ -21,3 +21,6 @@ click>=8.1.0
 
 # Data analysis
 pandas>=2.1.0
+
+# ML evaluation (Step 4 only)
+scikit-learn>=1.4.0

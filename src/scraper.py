@@ -599,6 +599,102 @@ class FutbinScraper:
         logger.info(f"Scraping complete: {len(results)}/{total} successful")
         return results
 
+    def get_player_metadata(self, futbin_id: int, slug: str) -> Optional[Dict]:
+        """
+        Scrape card metadata including card_type from Futbin player page.
+
+        Returns dict with: card_type, version_raw, rating, position, name
+        """
+        url = f"{Config.FUTBIN_BASE_URL}/player/{futbin_id}/{slug}"
+        logger.info(f"Fetching metadata: {url}")
+
+        response = self._make_request(url)
+        if not response:
+            return None
+
+        soup = BeautifulSoup(response.text, 'lxml')
+
+        card_type = None
+        version_raw = None
+
+        # Extract card type from .pcdisplay CSS classes
+        card_display = soup.select_one('.pcdisplay')
+        if card_display:
+            classes = ' '.join(card_display.get('class', [])).lower()
+
+            if 'icon' in classes:
+                card_type = 'ICON'
+            elif 'hero' in classes:
+                card_type = 'HERO'
+            elif 'toty' in classes:
+                card_type = 'TOTY'
+            elif 'totw' in classes or 'inform' in classes:
+                card_type = 'TOTW'
+            elif any(p in classes for p in ['futurestar', 'centurion', 'tots', 'rttk', 'thunderstruck']):
+                card_type = 'PROMO'
+
+        # Try version text element
+        version_el = soup.select_one('.card-version, .pcdisplay-ovr-type')
+        if version_el:
+            version_raw = version_el.text.strip()
+
+        # If CSS classes didn't determine type, try version_raw text
+        if not card_type and version_raw:
+            vr = version_raw.lower()
+            if 'icon' in vr:
+                card_type = 'ICON'
+            elif 'hero' in vr:
+                card_type = 'HERO'
+            elif 'toty' in vr:
+                card_type = 'TOTY'
+            elif 'totw' in vr or 'inform' in vr or 'if' == vr:
+                card_type = 'TOTW'
+
+        # Fallback to ID-based heuristic
+        if not card_type:
+            card_type = self.infer_card_type_from_id(futbin_id)
+
+        rating = None
+        rating_el = soup.select_one('.pcdisplay-rat')
+        if rating_el:
+            try:
+                rating = int(rating_el.text.strip())
+            except ValueError:
+                pass
+
+        position = None
+        pos_el = soup.select_one('.pcdisplay-pos')
+        if pos_el:
+            position = pos_el.text.strip()
+
+        name = slug.replace('-', ' ').title()
+        name_el = soup.select_one('h1')
+        if name_el:
+            name = name_el.text.strip()
+
+        return {
+            'card_type': card_type,
+            'version_raw': version_raw,
+            'rating': rating,
+            'position': position,
+            'name': name,
+        }
+
+    @staticmethod
+    def infer_card_type_from_id(futbin_id: int) -> str:
+        """Heuristic fallback: guess card_type from futbin_id ranges."""
+        if 18699 <= futbin_id <= 21500:
+            if 18800 <= futbin_id <= 18900:
+                return 'HERO'
+            return 'ICON'
+        if 21760 <= futbin_id <= 21810:
+            return 'TOTY'
+        if 20000 <= futbin_id <= 22500:
+            return 'TOTW'
+        if futbin_id <= 1000:
+            return 'GOLD_RARE'
+        return 'OTHER'
+
 
 class FutbinSearchScraper:
     """Scraper for Futbin player search/database pages."""

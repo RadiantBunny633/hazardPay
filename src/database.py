@@ -55,6 +55,14 @@ class Database:
         # Signal log collection (diagnostic logging for score analysis)
         self.db.signal_log.create_index([('player_id', ASCENDING), ('timestamp', DESCENDING)])
         self.db.signal_log.create_index('timestamp', expireAfterSeconds=30*24*3600)  # 30-day TTL
+
+        # Players card_type index (for ML pipeline grouping)
+        self.db.players.create_index('card_type')
+
+        # Labeled signals collection (permanent training data, no TTL)
+        self.db.labeled_signals.create_index('signal_id', unique=True)
+        self.db.labeled_signals.create_index([('card_type', ASCENDING), ('direction', ASCENDING)])
+        self.db.labeled_signals.create_index('signal_timestamp')
     
     def init_schema(self, schema_path: str = None):
         """Initialize database (MongoDB doesn't need schema, just ensures indexes)."""
@@ -529,6 +537,29 @@ class Database:
                 'SELL': len([l for l in logs if l.get('direction') == 'SELL']),
             }
         }
+
+    # ========== Player Metadata Operations ==========
+
+    def update_player_metadata(self, futbin_id: int, card_type: str,
+                               first_seen_at: datetime = None,
+                               version_raw: str = None) -> bool:
+        """Update enriched metadata fields on a player."""
+        update = {
+            '$set': {
+                'card_type': card_type,
+                'updated_at': datetime.now()
+            }
+        }
+        if first_seen_at:
+            update['$set']['first_seen_at'] = first_seen_at
+        if version_raw:
+            update['$set']['version_raw'] = version_raw
+
+        result = self.db.players.update_one(
+            {'futbin_id': futbin_id},
+            update
+        )
+        return result.modified_count > 0
 
     def get_volatility_scores(self, days: int = 7, platform: str = 'ps') -> List[Dict]:
         """Calculate price volatility for players over N days."""

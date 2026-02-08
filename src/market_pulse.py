@@ -92,25 +92,32 @@ class MarketPulseAnalyzer:
         self.scraper = FutbinScraper(platform=platform)
     
     def _categorize_player(self, player: dict, current_price: int, all_time_high: int) -> str:
-        """Determine which category a player belongs to based on price and ID."""
+        """Determine category, preferring stored card_type from enrichment."""
+        # Use enriched card_type if available
+        stored = player.get('card_type')
+        if stored:
+            category_map = {
+                'ICON': 'Icons',
+                'HERO': 'Heroes',
+                'TOTY': 'TOTY',
+                'TOTW': 'TOTW',
+                'PROMO': 'TOTW',  # Treat promos like TOTW for market analysis
+            }
+            if stored in category_map:
+                return category_map[stored]
+            # GOLD_RARE, SILVER, BRONZE, OTHER fall through to fodder classification
+
+        # Fallback: ID-based heuristics for un-enriched players
         futbin_id = player.get('futbin_id', 0)
-        
-        # Icons: High futbin_id AND expensive
         if 18699 <= futbin_id <= 21500 and all_time_high >= 200000:
             return 'Icons'
-        
-        # Heroes: Specific ID range
         if 18800 <= futbin_id <= 18900:
             return 'Heroes'
-        
-        # TOTY: Specific ID range and very expensive
         if 21760 <= futbin_id <= 21780 and all_time_high >= 500000:
             return 'TOTY'
-        
-        # TOTW: Mid-range IDs with specific price patterns
         if 20000 <= futbin_id <= 22500 and 10000 <= current_price <= 50000:
             return 'TOTW'
-        
+
         # Fodder by price tier
         if current_price >= 20000:
             return '89+ Fodder'

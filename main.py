@@ -2093,6 +2093,266 @@ def scheduler_cmd(ctx, interval):
         console.print("\n[yellow]Scheduler stopped[/yellow]")
 
 
+# ========== ML Pipeline Commands ==========
+
+@cli.command('enrich-cards')
+@click.option('--force', '-f', is_flag=True, help='Re-enrich even if card_type already set')
+@click.option('--player', '-p', type=str, default=None, help='Enrich a specific player by name')
+@click.pass_context
+def enrich_cards(ctx, force, player):
+    """Step 1: Enrich player cards with card_type and first_seen_at."""
+    from src.ml_pipeline import MLPipeline
+
+    pipeline = MLPipeline(platform=ctx.obj['platform'])
+
+    if player:
+        from src.database import get_db
+        db = get_db()
+        p = db.db.players.find_one({'name': {'$regex': player, '$options': 'i'}})
+        if not p:
+            console.print(f"Player '{player}' not found", style="red")
+            return
+        slug = p.get('slug') or p.get('name', '').lower().replace(' ', '-')
+        result = pipeline.enrich_player(p['futbin_id'], slug, force=force)
+        console.print(f"Enriched {p['name']}: card_type={result.get('card_type')}, "
+                      f"first_seen={result.get('first_seen_at')}, source={result.get('source')}")
+        return
+
+    console.print("[bold]Enriching all players with card_type and first_seen_at...[/bold]\n")
+    results = pipeline.enrich_all_players(force=force)
+
+    table = Table(title="Card Metadata Enrichment", box=box.SIMPLE)
+    table.add_column("Player", style="cyan")
+    table.add_column("Card Type", style="bold")
+    table.add_column("First Seen")
+    table.add_column("Source", style="dim")
+
+    enriched = 0
+    skipped = 0
+    for r in results:
+        if r.get('skipped'):
+            skipped += 1
+        else:
+            enriched += 1
+
+        first_seen_str = r['first_seen_at'].strftime('%Y-%m-%d') if r.get('first_seen_at') else '-'
+        source_str = r.get('source', '-')
+        table.add_row(r['name'], r.get('card_type', '?'), first_seen_str, source_str)
+
+    console.print(table)
+    console.print(f"\n[bold green]Enriched: {enriched}[/bold green]  [dim]Skipped (existing): {skipped}[/dim]")
+
+
+@cli.command('label-signals')
+@click.option('--min-age', '-a', default=7, type=int, help='Minimum age in days before labeling')
+@click.option('--stats', '-s', is_flag=True, help='Show labeled data statistics')
+@click.pass_context
+def label_signals_cmd(ctx, min_age, stats):
+    """Step 2: Label signals with actual price outcomes (what happened after each signal)."""
+    from src.ml_pipeline import MLPipeline
+
+    pipeline = MLPipeline(platform=ctx.obj['platform'])
+
+    if stats:
+        label_stats = pipeline.get_label_stats()
+        if label_stats['total'] == 0:
+            console.print("No labeled signals yet. Run [bold]label-signals[/bold] first.", style="yellow")
+            return
+
+        console.print(f"[bold]Labeled Signals: {label_stats['total']}[/bold]\n")
+
+        if label_stats.get('by_direction'):
+            console.print("[bold]By Direction:[/bold]")
+            for direction, count in label_stats['by_direction'].items():
+                console.print(f"  {direction}: {count}")
+
+        if label_stats.get('by_card_type'):
+            console.print("\n[bold]By Card Type:[/bold]")
+            table = Table(box=box.SIMPLE)
+            table.add_column("Card Type")
+            table.add_column("Count", justify="right")
+            table.add_column("Avg 7D Return", justify="right")
+            for ct, data in sorted(label_stats['by_card_type'].items()):
+                avg_ret = f"{data['avg_return_7d']:+.1f}%" if data.get('avg_return_7d') is not None else '-'
+                table.add_row(ct, str(data['count']), avg_ret)
+            console.print(table)
+        return
+
+    console.print("[bold]Labeling signals with actual outcomes...[/bold]\n")
+    result = pipeline.label_signals(min_age_days=min_age)
+
+    console.print(f"  Labeled:          [green]{result['labeled']}[/green]")
+    console.print(f"  Already labeled:  [dim]{result['already_labeled']}[/dim]")
+    console.print(f"  No price data:    [red]{result['skipped_no_price']}[/red]")
+
+    from src.database import get_db
+    total = get_db().db.labeled_signals.count_documents({})
+    console.print(f"\n[bold]Total labeled signals: {total}[/bold]")
+
+
+@cli.command('baselines')
+@click.option('--card-type', '-t', default=None, help='Filter by card type')
+@click.option('--new-cards', '-n', is_flag=True, help='Show time-to-bottom patterns for new cards')
+@click.pass_context
+def baselines_cmd(ctx, card_type, new_cards):
+    """Step 3: Show statistical baselines for signal accuracy by card type."""
+    from src.ml_pipeline import MLPipeline
+
+    pipeline = MLPipeline(platform=ctx.obj['platform'])
+
+    if new_cards:
+        patterns = pipeline.compute_new_card_patterns()
+        if not patterns:
+            console.print("No cards with first_seen_at data. Run [bold]enrich-cards[/bold] first.", style="yellow")
+            return
+
+        table = Table(title="Time-to-Bottom by Card Type", box=box.ROUNDED)
+        table.add_column("Card Type", style="bold")
+        table.add_column("Samples", justify="right")
+        table.add_column("Avg Days", justify="right")
+        table.add_column("Median Days", justify="right")
+        table.add_column("Avg Drop %", justify="right")
+
+        for p in patterns:
+            table.add_row(
+                p['card_type'],
+                str(p['sample_size']),
+                str(p['avg_days_to_bottom']),
+                str(p['median_days_to_bottom']),
+                f"{p['avg_drop_pct']:.1f}%",
+            )
+
+        console.print(table)
+
+        # Show individual entries per type
+        for p in patterns:
+            console.print(f"\n[bold]{p['card_type']}[/bold] details:")
+            detail_table = Table(box=box.SIMPLE)
+            detail_table.add_column("Player")
+            detail_table.add_column("Days to Bottom", justify="right")
+            detail_table.add_column("Drop %", justify="right")
+            detail_table.add_column("First Price", justify="right")
+            detail_table.add_column("Bottom Price", justify="right")
+            for e in p['entries']:
+                detail_table.add_row(
+                    e['player'],
+                    str(e['days_to_bottom']),
+                    f"{e['drop_pct']:.1f}%",
+                    f"{e['first_price']:,}",
+                    f"{e['bottom_price']:,}",
+                )
+            console.print(detail_table)
+        return
+
+    baselines = pipeline.compute_baselines()
+    if not baselines:
+        console.print("No labeled data. Run [bold]label-signals[/bold] first.", style="yellow")
+        return
+
+    for ct, data in baselines.items():
+        if card_type and ct != card_type:
+            continue
+
+        console.print(f"\n[bold]{ct}[/bold] ({data['total_signals']} signals)")
+
+        table = Table(box=box.SIMPLE)
+        table.add_column("Score Range")
+        table.add_column("N", justify="right")
+        table.add_column("Avg 2D", justify="right")
+        table.add_column("Avg 7D", justify="right")
+        table.add_column("Hit 2D", justify="right")
+        table.add_column("Hit 7D", justify="right")
+        table.add_column("Win 7D", justify="right")
+
+        for row in data['by_score_range']:
+            if row['n'] == 0:
+                table.add_row(row['range'], '0', '-', '-', '-', '-', '-')
+                continue
+
+            ret_2d = row.get('avg_return_2d')
+            ret_7d = row.get('avg_return_7d')
+            table.add_row(
+                row['range'],
+                str(row['n']),
+                f"{ret_2d:+.1f}%" if ret_2d is not None else '-',
+                f"{ret_7d:+.1f}%" if ret_7d is not None else '-',
+                f"{row.get('hit_rate_2d', 0):.0f}%" if row.get('hit_rate_2d') is not None else '-',
+                f"{row.get('hit_rate_7d', 0):.0f}%" if row.get('hit_rate_7d') is not None else '-',
+                f"{row.get('win_rate_7d', 0):.0f}%" if row.get('win_rate_7d') is not None else '-',
+            )
+
+        console.print(table)
+
+
+@cli.command('eval-ml')
+@click.option('--min-samples', '-n', default=100, type=int, help='Minimum labeled samples required')
+@click.pass_context
+def eval_ml_cmd(ctx, min_samples):
+    """Step 4: Evaluate if ML improves over statistical baselines."""
+    from src.ml_pipeline import MLPipeline
+
+    pipeline = MLPipeline(platform=ctx.obj['platform'])
+
+    total = pipeline.db.db.labeled_signals.count_documents({
+        'direction': 'BUY', 'return_7d_pct': {'$ne': None}
+    })
+
+    if total < min_samples:
+        console.print(f"Need {min_samples} labeled BUY signals, have {total}.", style="yellow")
+        console.print("Run [bold]label-signals[/bold] periodically to build up data.", style="dim")
+        return
+
+    try:
+        from sklearn.ensemble import GradientBoostingRegressor
+    except ImportError:
+        console.print("scikit-learn required. Install with: [bold]pip install scikit-learn[/bold]", style="red")
+        return
+
+    console.print(f"[bold]Evaluating ML on {total} labeled signals...[/bold]\n")
+
+    try:
+        result = pipeline.evaluate_ml()
+    except ValueError as e:
+        console.print(f"Error: {e}", style="red")
+        return
+
+    table = Table(title="Baseline vs ML", box=box.ROUNDED)
+    table.add_column("Metric")
+    table.add_column("Baseline", justify="right")
+    table.add_column("ML (GBT)", justify="right")
+    table.add_column("Delta", justify="right")
+
+    table.add_row(
+        "MAE (lower=better)",
+        f"{result['baseline_mae']:.2f}%",
+        f"{result['ml_mae']:.2f}%",
+        f"{result['improvement_pct']:+.1f}%",
+    )
+    table.add_row(
+        "Direction Accuracy",
+        f"{result['baseline_hit_rate']:.0f}%",
+        f"{result['ml_hit_rate']:.0f}%",
+        f"{result['ml_hit_rate'] - result['baseline_hit_rate']:+.1f}%",
+    )
+
+    console.print(table)
+    console.print(f"\nTrain: {result['train_size']} | Test: {result['test_size']}")
+
+    console.print("\n[bold]Top 10 Features:[/bold]")
+    for feat, importance in result['top_features']:
+        bar_len = int(importance * 100)
+        console.print(f"  {feat:35s} {importance:.4f} {'█' * bar_len}")
+
+    if result['recommendation'] == 'ADOPT_ML':
+        console.print(
+            "\n[bold green]Recommendation: ML improves over baselines by >15%. Worth adopting.[/bold green]"
+        )
+    else:
+        console.print(
+            "\n[bold yellow]Recommendation: ML does not meaningfully improve. Keep statistical baselines.[/bold yellow]"
+        )
+
+
 def main():
     """Main entry point."""
     print_banner()
