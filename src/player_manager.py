@@ -123,34 +123,46 @@ class PlayerManager:
         return count
     
     def add_player_by_url(
-        self, 
-        url: str, 
+        self,
+        url: str,
         fetch_initial_price: bool = True,
-        backfill_history: bool = False
+        backfill_history: bool = False,
+        card_type: str = None
     ) -> Optional[Dict]:
         """
         Add a player from a Futbin URL.
-        
+
         Example URL: https://www.futbin.com/26/player/21407/cruyff/market
+
+        Args:
+            card_type: Optional card type (ICON, HERO, TOTY, TOTW, PROMO, GOLD_RARE, etc.)
+                       If provided, stored on the player document immediately.
         """
         import re
-        
+
         match = re.search(r'/player/(\d+)/([^/]+)', url)
         if not match:
             logger.error(f"Could not parse Futbin URL: {url}")
             return None
-        
+
         futbin_id = int(match.group(1))
         slug = match.group(2)
         name = slug.replace('-', ' ').title()
-        
-        return self.add_player(
+
+        result = self.add_player(
             futbin_id=futbin_id,
             name=name,
             slug=slug,
             fetch_initial_price=fetch_initial_price,
             backfill_history=backfill_history
         )
+
+        # Set card_type if provided
+        if result and card_type:
+            self.db.update_player_metadata(futbin_id=futbin_id, card_type=card_type)
+            result['card_type'] = card_type
+
+        return result
     
     def get_player(self, player_id: int = None, futbin_id: int = None) -> Optional[Dict]:
         """Get player info by internal or Futbin ID."""

@@ -330,8 +330,9 @@ def player_list(ctx, show_all):
         return
     
     table = Table(title="Tracked Players", box=box.ROUNDED)
-    table.add_column("ID", style="dim", max_width=8)
+    table.add_column("Futbin ID", style="dim")
     table.add_column("Name", style="bold")
+    table.add_column("Type", style="dim")
     table.add_column("Price", justify="right", style="cyan")
     table.add_column("Position", justify="center")  # 0-100% in range
     table.add_column("24H Δ", justify="right")
@@ -400,8 +401,9 @@ def player_list(ctx, show_all):
                     change_7d = f"[{color}]{sign}{pct:.1f}%[/{color}]"
         
         table.add_row(
-            str(p['id'])[:8],
+            str(p['futbin_id']),
             p['name'],
+            p.get('card_type', '-'),
             price_str,
             position_str,
             change_24h,
@@ -490,32 +492,85 @@ def player_remove(ctx, player_id, force):
 @click.option('--delay', '-d', default=2.0, help='Delay between requests (seconds)')
 @click.pass_context
 def player_import_file(ctx, filepath, backfill, delay):
-    """Import players from a file (one Futbin URL per line)."""
+    """Import players from a file (one Futbin URL per line).
+
+    Section headers (# Icons, # TOTW, etc.) are used to assign card_type
+    to each player automatically during import.
+    """
     from src.player_manager import get_manager
     import time
-    
+
     manager = get_manager(platform=ctx.obj['platform'])
-    
+
+    # Map section header keywords to card types
+    SECTION_MAP = {
+        'icon': 'ICON',
+        'hero': 'HERO',
+        'toty': 'TOTY',
+        'totw': 'TOTW',
+        'winter wildcard': 'PROMO',
+        'future star': 'PROMO',
+        'joga bonito': 'PROMO',
+        'centurion': 'PROMO',
+        'thunderstruck': 'PROMO',
+        'promo': 'PROMO',
+        '84 rated fodder': 'GOLD_RARE',
+        '85 rated fodder': 'GOLD_RARE',
+        '86 rated fodder': 'GOLD_RARE',
+        '87 rated fodder': 'GOLD_RARE',
+        '88 rated fodder': 'GOLD_RARE',
+        '89 rated fodder': 'GOLD_RARE',
+        'fodder': 'GOLD_RARE',
+    }
+
+    def parse_section_card_type(header_text: str) -> str:
+        """Map a section header like '# Icons' to a card type."""
+        lower = header_text.lower().strip()
+        for keyword, card_type in SECTION_MAP.items():
+            if keyword in lower:
+                return card_type
+        return None
+
+    # Parse file: track current section header for card_type
+    entries = []  # list of (url, card_type)
+    current_card_type = None
+
     with open(filepath, 'r') as f:
-        urls = [line.strip() for line in f if line.strip() and not line.startswith('#')]
-    
-    if not urls:
+        for line in f:
+            stripped = line.strip()
+            if not stripped:
+                continue
+            if stripped.startswith('#'):
+                # Section header — extract card type
+                header = stripped.lstrip('#').strip()
+                parsed = parse_section_card_type(header)
+                if parsed:
+                    current_card_type = parsed
+                continue
+            # It's a URL
+            entries.append((stripped, current_card_type))
+
+    if not entries:
         console.print("No URLs found in file", style="yellow")
         return
-    
-    console.print(f"Found [bold]{len(urls)}[/bold] player URLs to import", style="cyan")
-    
+
+    console.print(f"Found [bold]{len(entries)}[/bold] player URLs to import", style="cyan")
+
     added = 0
     failed = 0
-    
-    for i, url in enumerate(urls, 1):
-        console.print(f"[{i}/{len(urls)}] Processing: {url[:60]}...", style="dim")
-        
+
+    for i, (url, card_type) in enumerate(entries, 1):
+        ct_label = f" [{card_type}]" if card_type else ""
+        console.print(f"[{i}/{len(entries)}] Processing{ct_label}: {url[:60]}...", style="dim")
+
         try:
-            result = manager.add_player_by_url(url, backfill_history=backfill)
+            result = manager.add_player_by_url(
+                url, backfill_history=backfill, card_type=card_type
+            )
             if result:
                 hist_msg = f" (+{result.get('history_count', 0)} history)" if backfill else ""
-                console.print(f"  ✓ Added {result['name']}{hist_msg}", style="green")
+                ct_msg = f" ({result.get('card_type', '')})" if result.get('card_type') else ""
+                console.print(f"  ✓ Added {result['name']}{ct_msg}{hist_msg}", style="green")
                 added += 1
             else:
                 console.print(f"  ✗ Failed to add", style="red")
@@ -523,11 +578,11 @@ def player_import_file(ctx, filepath, backfill, delay):
         except Exception as e:
             console.print(f"  ✗ Error: {e}", style="red")
             failed += 1
-        
+
         # Rate limiting
-        if i < len(urls):
+        if i < len(entries):
             time.sleep(delay)
-    
+
     console.print(f"\n✓ Import complete: {added} added, {failed} failed", style="green bold")
 
 
@@ -1362,19 +1417,37 @@ def portfolio():
 @click.option('--target', '-t', type=int, default=None, help='Target sell price')
 @click.option('--type', '-T', 'pos_type', default='meta', type=click.Choice(['fodder', 'meta']), help='Investment type')
 @click.option('--notes', '-n', default='', help='Trade notes')
+@click.option('--id', 'futbin_id', type=int, default=None, help='Futbin ID (use when multiple versions exist)')
 @click.pass_context
-def portfolio_buy(ctx, player_name, price, qty, target, pos_type, notes):
+def portfolio_buy(ctx, player_name, price, qty, target, pos_type, notes, futbin_id):
     """Record a buy position."""
     from src.portfolio import get_portfolio
     from src.database import get_db
-    
+
     db = get_db()
-    
-    # Find player by name (case-insensitive partial match)
-    player = db.db.players.find_one({
-        'name': {'$regex': player_name, '$options': 'i'}
-    })
-    
+
+    if futbin_id:
+        # Exact match by futbin_id
+        player = db.db.players.find_one({'futbin_id': futbin_id})
+    else:
+        # Find by name — if multiple matches, prompt user
+        matches = list(db.db.players.find({
+            'name': {'$regex': player_name, '$options': 'i'}
+        }))
+        if len(matches) == 0:
+            player = None
+        elif len(matches) == 1:
+            player = matches[0]
+        else:
+            console.print(f"Multiple players match '{player_name}':", style="yellow")
+            for m in matches:
+                cache = db.db.longterm_cache.find_one({'cache_key': f"{m['futbin_id']}_{ctx.obj['platform']}"})
+                cur_price = cache['data'].get('current', '?') if cache and cache.get('data') else '?'
+                cur_str = f"{cur_price:,}" if isinstance(cur_price, int) else cur_price
+                console.print(f"  --id {m['futbin_id']}  {m['name']}  ({m.get('card_type', '?')})  ~{cur_str}")
+            console.print("\nRe-run with --id <futbin_id> to pick one.", style="yellow")
+            return
+
     if not player:
         console.print(f"Player '{player_name}' not found", style="red")
         return

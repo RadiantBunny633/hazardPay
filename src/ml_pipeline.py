@@ -31,36 +31,49 @@ class MLPipeline:
         """
         Enrich a single player with card_type and first_seen_at.
 
-        Returns dict with: card_type, first_seen_at, source ('scraped'/'inferred')
+        card_type priority:
+        1. Existing card_type on player doc (set by import-file from section headers)
+        2. Scraped from Futbin page CSS classes
+        3. ID-range heuristic (least reliable)
+
+        Returns dict with: card_type, first_seen_at, source
         """
         player = self.db.db.players.find_one({'futbin_id': futbin_id})
         if not player:
             return {'error': f'Player {futbin_id} not found'}
 
-        # Skip if already enriched (unless forced)
-        if not force and player.get('card_type'):
+        existing_card_type = player.get('card_type')
+        has_first_seen = player.get('first_seen_at') is not None
+
+        # Skip if fully enriched already (unless forced)
+        if not force and existing_card_type and has_first_seen:
             return {
-                'card_type': player['card_type'],
+                'card_type': existing_card_type,
                 'first_seen_at': player.get('first_seen_at'),
                 'source': 'existing',
                 'skipped': True,
             }
 
-        # Try scraping metadata from Futbin page
-        card_type = None
-        version_raw = None
-        source = 'inferred'
+        # Determine card_type: prefer existing (from import), then scrape, then heuristic
+        card_type = existing_card_type
+        version_raw = player.get('version_raw')
+        source = 'import' if existing_card_type else None
 
-        metadata = self.scraper.get_player_metadata(futbin_id, slug)
-        if metadata and metadata.get('card_type'):
-            card_type = metadata['card_type']
-            version_raw = metadata.get('version_raw')
-            source = 'scraped'
+        if not card_type:
+            metadata = self.scraper.get_player_metadata(futbin_id, slug)
+            if metadata and metadata.get('card_type'):
+                card_type = metadata['card_type']
+                version_raw = metadata.get('version_raw')
+                source = 'scraped'
+            else:
+                card_type = FutbinScraper.infer_card_type_from_id(futbin_id)
+                source = 'inferred'
+
+        # Derive first_seen_at: always re-derive when forced, otherwise keep existing
+        if force or not player.get('first_seen_at'):
+            first_seen_at = self._derive_first_seen_at(futbin_id, player)
         else:
-            card_type = FutbinScraper.infer_card_type_from_id(futbin_id)
-
-        # Derive first_seen_at from longterm cache
-        first_seen_at = self._derive_first_seen_at(futbin_id, player)
+            first_seen_at = player.get('first_seen_at')
 
         # Store
         self.db.update_player_metadata(
@@ -102,17 +115,21 @@ class MLPipeline:
         return results
 
     def _derive_first_seen_at(self, futbin_id: int, player: dict) -> Optional[datetime]:
-        """Derive first_seen_at from longterm cache or created_at."""
-        # Try longterm cache first
-        cache_key = f"{futbin_id}_{self.platform}"
-        cached = self.db.db.longterm_cache.find_one({'cache_key': cache_key})
+        """Derive first_seen_at from longterm price data or created_at."""
+        slug = player.get('slug') or player.get('name', '').lower().replace(' ', '-')
 
+        # Try fetching longterm data (will use cache if fresh, otherwise fetch)
         first_seen = None
-        if cached and cached.get('data') and cached['data'].get('prices'):
-            prices = cached['data']['prices']
-            if prices:
-                first_ts_ms = prices[0][0]
-                first_seen = datetime.fromtimestamp(first_ts_ms / 1000)
+        try:
+            longterm = self.scraper.get_longterm_daily_prices(
+                futbin_id, slug, cache_only=False
+            )
+            if longterm and longterm.get('prices'):
+                first_ts_ms = longterm['prices'][0][0]
+                # Futbin timestamps are UTC midnight; convert as UTC to get correct date
+                first_seen = datetime.utcfromtimestamp(first_ts_ms / 1000)
+        except Exception as e:
+            logger.debug(f"Could not fetch longterm data for {slug}: {e}")
 
         # Fall back to created_at
         created_at = player.get('created_at')
