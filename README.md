@@ -1,4 +1,4 @@
-# HazardPay 💰⚽
+# HazardPay
 
 **FC 26 Ultimate Team Market Tracker**
 
@@ -6,18 +6,18 @@ An automated pipeline that scrapes EA FC 26 player prices from Futbin, stores hi
 
 ## Features
 
-- 🕷️ **Futbin Scraper**: Fetches current prices, price ranges, and recent price history
-- 📈 **Historical Backfill**: Imports 500 historical price points from Futbin sales pages
-- 💾 **MongoDB Storage**: Stores historical price data for analysis (no complex setup)
-- 📊 **Investment Signals**: Automatically detects:
+- **Futbin Scraper**: Fetches current prices, price ranges, and recent price history
+- **Historical Backfill**: Imports 500 historical price points from Futbin sales pages
+- **MongoDB Storage**: Stores historical price data for analysis (no complex setup)
+- **Investment Signals**: Automatically detects:
   - Price drops (buying opportunities)
   - Price spikes (selling opportunities)
   - Momentum trends (up/down over multiple days)
   - Floor prices (minimal downside risk)
   - High volatility (flip opportunities)
-- ⏰ **Automated Scheduler**: Runs price fetches multiple times daily
-- 📋 **Watchlist**: Track target buy/sell prices for specific players
-- 🔔 **Alerts System**: Get notified when signals are detected
+- **Automated Scheduler**: Runs price fetches multiple times daily
+- **Watchlist**: Track target buy/sell prices for specific players
+- **Alerts System**: Get notified when signals are detected
 
 ## Installation
 
